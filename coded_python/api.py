@@ -70,6 +70,24 @@ def unmix(image: ee.Image, endmembers: dict = None, cloudThreshold: float = None
         .rename(['GV', 'Shade', 'NPV', 'Soil', 'NDFI']) \
         .updateMask(cloudMask)
 
+def make_class_params(generalParams):
+    # // Classification Parameter
+    classParams = {
+        'imageToClassify': None,
+        'numberOfSegments': len(generalParams['segs']),
+        'bandNames':  generalParams['classBands'],
+        'ancillary': None,
+        'ancillaryFeatures': None,
+        'trainingData': None,
+        'classifier': ee.Classifier.smileRandomForest(150),
+        'studyArea': generalParams['studyArea'],
+        'classProperty': 'landcover',
+        'coefs': ['INTP', 'SIN', 'COS', 'RMSE'],
+        'trainProp': None,
+        'seed': None,
+        'subsetTraining': False,
+    }
+    return classParams
 
 # functionection used by coded
 def make_general_params(params: dict):
@@ -132,6 +150,22 @@ def build_ccdc_image(output: dict, generalParams: dict):
     output['Layers']['formattedChangeOutput'] = ccdc.buildCcdImage(output['Layers']['rawChangeOutput'],
                                                                    len(generalParams['segs']), generalParams['classBands'])
 
+def prep_samples(samples:ee.FeatureCollection, output:dict, generalParams:dict)-> ee.FeatureCollection:
+    """ prepares sample collection by adding ccdc coefs from the formatted change output"""
+    # // Get training data coefficients
+    def prep_sample(feat: ee.Feature) -> ee.Feature:
+        coefsForTraining = ccdc.getMultiCoefs(output['Layers']['formattedChangeOutput'], ee.Image.constant(feat.getNumber('year')),
+                                            generalParams['classBands'], generalParams['coefs'], True, generalParams['segs'], 'before')
+
+        sampleForTraining = feat.setMulti(coefsForTraining.reduceRegion(**{
+            'geometry': feat.geometry(),
+            'scale': 90,
+            'reducer': ee.Reducer.mean()
+        }))
+
+        return sampleForTraining
+    
+    return samples.map(prep_sample)
 
 def coded(params: dict):
     if params is None:
@@ -144,22 +178,8 @@ def coded(params: dict):
     changeDetectionParams = make_change_detection_params(
         params, region=generalParams['studyArea'], start=params['start'], end=params['end'])
 
-    # // Classification Parameter
-    classParams = {
-        'imageToClassify': None,
-        'numberOfSegments': len(generalParams['segs']),
-        'bandNames':  generalParams['classBands'],
-        'ancillary': None,
-        'ancillaryFeatures': None,
-        'trainingData': None,
-        'classifier': ee.Classifier.smileRandomForest(150),
-        'studyArea': generalParams['studyArea'],
-        'classProperty': 'landcover',
-        'coefs': ['INTP', 'SIN', 'COS', 'RMSE'],
-        'trainProp': None,
-        'seed': None,
-        'subsetTraining': False,
-    }
+    classParams = make_class_params(generalParams)
+
     # // Output Dictionary
     output = make_output_dict(changeDetectionParams, generalParams)
 
@@ -172,7 +192,6 @@ def coded(params: dict):
     # # dev delete later
     # else:
     #     output.Layers['mask'] = ee.Image(1)
-    print(changeDetectionParams['collection'].size().getInfo())
     prep_collection(changeDetectionParams, generalParams)
 
     #
@@ -185,89 +204,48 @@ def coded(params: dict):
     #   // ----------------- Run Analysis
     run_ccdc(output, changeDetectionParams)
     build_ccdc_image(output, generalParams)
-    # output['Layers']['formattedChangeOutput']
-    # changeDetectionParams['collection']
+    #  Format classification parameters and extract values
     prep = params.get('prepTraining', False)
     if prep:
-
-        # // Get training data coefficients
-        def prep_samples(feat: ee.Feature) -> ee.Feature:
-            scale = changeDetectionParams['collection'].first(
-                ).projection().nominalScale()
-            coefsForTraining = ccdc.getMultiCoefs(output['Layers']['formattedChangeOutput'], ee.Image.constant(feat.getNumber('year')),
-                                                  generalParams['classBands'], generalParams['coefs'], True, generalParams['segs'], 'before')
-            coefsForTraining = coefsForTraining.reproject('EPSG:4326',None, scale)
-            feat_col = ee.Image(coefsForTraining).sample(
-                region=feat.geometry(), scale=90, geometries=True, dropNulls=False)
-            md = feat.toDictionary()
-            sampleForTraining = ee.Feature(feat_col.first()).set(md)
-
-            # sampleForTraining = feat.setMulti(coefsForTraining.reduceRegion(**{
-            #     'geometry': feat.geometry(),
-            #     'scale': 90,
-            #     'reducer': ee.Reducer.mean()
-            # }))
-
-            return sampleForTraining
-        sampleForTraining = params['training'].map(prep_samples)
-
-        # # test
-        pnt = sampleForTraining.first()
-        coefsForTraining = ee.Image(ccdc.getMultiCoefs(output['Layers']['formattedChangeOutput'], ee.Image.constant(pnt.getNumber('year')),
-                                                       generalParams['classBands'], generalParams['coefs'], True, generalParams['segs'], 'before'))
-        print(changeDetectionParams['collection'].first(
-        ).projection().nominalScale().getInfo())
-        print(changeDetectionParams['collection'].first(
-        ).projection().crs().getInfo())
-
-        # coefsForTraining = coefsForTraining.reproject('EPSG:4326', None, 30)
-        coefsForTraining = ee.Image(
-        "projects/python-coded/assets/tests/test_ccdc_python_coefsForTraining")  # this works but not on the fly? wtf
-        # test sample
-        td = coefsForTraining.sample(
-            region=pnt.geometry(), scale=90, geometries=True, dropNulls=False)
-
-        # test buffering
-        # # ee.Number(90).sqrt().divide(2), 1).bounds()
-
-        # td = ee.Image(coefsForTraining).reduceRegion(
-        #     geometry=pnt.geometry(),
-        #     scale=90,
-        #     # crs='EPSG:4326',
-        #     reducer=ee.Reducer.mean(),
-        # )
-        print('some bs',td.getInfo())
-        # print(coefsForTraining.bandNames().getInfo())
-
+        classParams['trainingData'] = prep_samples(params.get('training'), output, generalParams)
         # TODO how to handel exporting table? do we even want prep training in sepal? prob
-        # Export.table.toAsset({
-        #   collection: sampleForTraining,
-        #   description: 'sample_with_pred',
-        # })
+        # description = 'python-js-ccdc'
+        # assetid = 'projects/python-coded/assets/tests/prepped/python_prepped_samples'
+        # exporting.export_table_asset(collection,description,assetid)
+        return classParams['trainingData']
 
     else:
-        print('no')
-        sampleForTraining = params['training']
-    # sampleForTraining  # output['Layers']['formattedChangeOutput']
-    return sampleForTraining  # pnt  # sampleForTraining  # coefsForTraining
+        classParams['trainingData'] = params.get('training')
+
+    classParams['imageToClassify'] = output['Layers']['formattedChangeOutput']
+    # TODO: note, should prep exit? does unprepped data get coefs added anyways? might be able to remove if/else
+    vals = classParams.keys()
+    # // Run classification
+    # note: stopping here, need to pythonify utils classification classifysegments and find py equlievent of apply()
+    output['Layers']['classificationRaw'] = utils.Classification.classifySegments.apply(null, vals)
+
+    return vals
 
 
 if __name__ == "__main__":
-    aoi = ee.FeatureCollection(
-        'projects/python-coded/assets/tests/test_geometry')
-    p = {'studyArea': aoi, 'start': '2018-01-01', 'end': '2020-12-31', 'prepTraining': True,
-         'training': ee.FeatureCollection("projects/python-coded/assets/tests/test_training")}
-    t = coded(p)
-    collection = t
-    description = 'wtf-ccdc'
-    bucket = 'gee-upload'
-    task = ee.batch.Export.table.toCloudStorage(
-        collection=collection, description=description, bucket=bucket)
-    # task.start()
+    # aoi = ee.FeatureCollection(
+    #     'projects/python-coded/assets/tests/test_geometry')
+    # p = {'studyArea': aoi, 'start': '2018-01-01', 'end': '2020-12-31', 'prepTraining': True,
+    #      'training': ee.FeatureCollection("projects/python-coded/assets/tests/test_training")}
+    from coded_python.data.testing.testing_dicts import prepped, not_prepped
+
+    # t = coded(not_prepped)
+    t = coded(prepped)
+    print(t)
+    # collection = t
+    # description = 'python-js-ccdc'
+    # bucket = 'gee-upload'
+    # assetid = 'projects/python-coded/assets/tests/prepped/python_prepped_samples'
+    # exporting.export_table_asset(collection,description,assetid)
     # print(t.getInfo())
     # print(t.size().getInfo())
     # print(t.first().propertyNames().getInfo())
-    print(' /n',t.first().getInfo())
+    # print(t.limit(2).getInfo())
 
     #
     # print(t.bandNames().getInfo())
