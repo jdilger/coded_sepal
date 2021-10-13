@@ -2,9 +2,16 @@ import ee
 ee.Initialize()
 
 # Export.table.toCloudStorage(collection, description, bucket, fileNamePrefix, fileFormat, selectors, maxVertices)
-def export_table(collection, description, bucket, fileNamePrefix, fileFormat, selectors, maxVertices):
+def export_table_cloud(collection:ee.FeatureCollection, description:str, bucket:str, fileNamePrefix:str, fileFormat:str, selectors:list, maxVertices:int=None):
     task = ee.batch.Export.table.toCloudStorage(collection=collection,description=description,bucket=bucket)
     task.start()
+    return description
+    
+# Export.table.toAsset(collection, description, assetId, maxVertices)
+def export_table_asset(collection:ee.FeatureCollection, description:str, assetId:str, maxVertices: int=None):
+    task = ee.batch.Export.table.toAsset(collection, description, assetId, maxVertices)
+    task.start()
+    return description
     
 def export_img(image,
                geometry,
