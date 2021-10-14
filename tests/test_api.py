@@ -38,7 +38,7 @@ class PrepCollection(unittest.TestCase):
         col = ee.ImageCollection("LANDSAT/LC08/C01/T2_SR") \
             .filterDate('2018-01-01', '2020-12-31')
         aoi = ee.FeatureCollection(
-            'projects/python-coded/assets/tests/test_geometry')
+            'projects/python-coded/assets/tests/regions/test_geometry')
         cdp = {'collection': col}
         gp = {'studyArea': aoi,
               'classBands': ['B1', 'B2', 'B3']}
