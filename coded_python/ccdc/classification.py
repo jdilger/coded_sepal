@@ -2,8 +2,51 @@
 import math
 import random
 import ee
-
+from coded_python.ccdc import ccdc
 ee.Initialize()
+
+# /**
+# * Function to convert segment band names to universal band names to classify
+# * @param {number} seg segment number
+# * @param {ee.Image} imageToClassify ccdc coefficient stack to classify
+# * @param {array} predictors list of predictor variables
+# * @param {array} bandNames band names of coefficient image
+# * @param {array} ancillary list of ancillary data
+# * @returns {ee.List} list of input features
+# * @returns {ee.Image} bands of the ccdc stack to classify
+# */ 
+def getInputFeatures(seg, imageToClassify, predictors, bandNames, ancillary):
+
+    str = ee.String('S').cat(ee.String(ee.Number(seg).int8())).cat('_.*')
+    # // Another string to remove segment prefix
+    str2 = ee.String('S').cat(ee.String(ee.Number(seg).int8())).cat('_')
+
+    # // Select bands to classify and add ancillary
+    bands = imageToClassify.select([str])
+
+    # // Rename without prefix
+    renamedBands = bands.bandNames().map(lambda bn : ee.String(ee.String(bn).replace('_coef_','_').replace('_COEF_','_').split(str2).get(1)))
+
+    bands = bands.rename(renamedBands)
+
+    # // Mask where there's no model
+    bands = bands.updateMask(bands.select('tStart').gt(0))
+
+    # // Normalize the intercepts
+    bands = ccdc.applyNorm(bands, bands.select('.*tStart'), bands.select('.*tEnd'))
+
+    # // Get phase and amplitude if necessary
+    phaseAmp = ccdc.newPhaseAmplitude(bands, '.*SIN.*','.*COS.*')
+
+    if isinstance(ancillary, ee.Image):
+        phaseAmp = phaseAmp.addBands(ancillary)
+
+    # // Add phase, amplitude, and ancillary
+    bands = bands.addBands([phaseAmp]).select(predictors)
+    # // Remove non-inputs
+    inputFeatures = bands.bandNames().removeAll(['tStart','tEnd','tBreak','changeProb',
+      'BLUE_MAG','GREEN_MAG','RED_MAG','NIR_MAG','SWIR1_MAG','SWIR2_MAG','TEMP_MAG','NDFI_MAG'])
+    return [inputFeatures, bands]
 
 # /**
 #  * Subset training data into random training and testing data
