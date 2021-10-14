@@ -9,6 +9,7 @@
 #         buildBandTag
 #     buildStartEndBreakProb
 #         buildSegmentTag
+import math
 import ee
 ee.Initialize()
 
@@ -329,6 +330,29 @@ def getMultiCoefs(ccdResults, date, bandList, coef_list, cond, segNames, behavio
 
     return ee.Image(outCoefs)
 
+# /**
+#  * Get phase and amplitude. Replace old function with this.
+#  * 
+#  * @param {ee.Image} ccd results CCD results in long multi-band format
+#  * @param {String} sinExpr Regular expression of the sine harmonic coefficient (e.g  '.*SIN.*') for all harmonics
+#  * @param {String} cosExpr Regular expression of the cosine harmonic coefficient (e.g  '.*COS.*) for all harmonics.
+#  *                         Must retrieve the same number of bands as sinExpr
+#  * @returns{ee.Image} Image with two bands representing phase and amplitude of
+#  *                    the desired harmonic
+# **/
+def newPhaseAmplitude(img, sinExpr, cosExpr):
+    sin = img.select(sinExpr)
+    cos = img.select(cosExpr)
+    #   // Scale to [0, 1] from radians. 
+    # // mult 365 To get phase in days!
+    phase = sin.atan2(cos).unitScale(-math.pi, math.pi).multiply(365) 
+    
+    amplitude = sin.hypot(cos) #// Order doesn't matter
+    
+    phaseNames = phase.bandNames().map(lambda x : ee.String(x).replace('_SIN', '_PHASE'))
+    amplitudeNames = amplitude.bandNames().map(lambda x : ee.String(x).replace('_SIN', '_AMPLITUDE'))
+    
+    return phase.rename(phaseNames).addBands(amplitude.rename(amplitudeNames))
 
 if __name__ == "__main__":
     import api
