@@ -9,7 +9,7 @@ ee.Initialize()
 # * Function to convert segment band names to universal band names to classify
 # * @param {number} seg segment number
 # * @param {ee.Image} imageToClassify ccdc coefficient stack to classify
-# * @param {array} predictors list of predictor variables
+# * @param {array} predictors list of predictor iables
 # * @param {array} bandNames band names of coefficient image
 # * @param {array} ancillary list of ancillary data
 # * @returns {ee.List} list of input features
@@ -121,3 +121,85 @@ def accuracyProcedure(trainingData, imageToClassify, predictors, bandNames,
     classified = testSubsetTest.classify(trained)
     confMatrix = classified.errorMatrix(classProperty, 'classification')
     return confMatrix
+
+# /**
+# * Classify stack of CCDC coefficient, band-separated by segment
+# * @param {ee.Image} imageToClassify ccdc coefficient stack to classify
+# * @param {number} numberOfSegments number of segments to classify
+# * @param {array} bandNames list of band names to classify 
+# * @param {array} ancillary list of ancillary predictor data
+# * @param {ee.Image} ancillaryFeatures ancillary data image
+# * @param {ee.FeatureCollection} trainingData training data
+# * @param {ee.Classifier} classifier earth engine classifier with parameters
+# * @param {ee.Geometry} studyArea boundaries of region to subset training data, null uses all data. 
+# * @param {string} [classProperty='LC_Num'] attribute name with land cover label
+# * @param {array} coefs list of coefficients to classify
+# * @param {float} [trainProp=.4] proportion of data to use subset for training
+# * @param {number} [seed='random'] seed to use for the random column generator
+# * @param {boolean} [subsetTraining=true] true to subset training to geometry, false to not
+# * @returns {ee.Image} classified stack of CCDC segments
+# */ 
+def classifySegments(imageToClassify, numberOfSegments, bandNames,
+    ancillary, ancillaryFeatures, trainingData, classifier,  
+    classProperty, coefs, seed, subsetTraining, **kwargs):
+    trainProp = kwargs.get('trainProp', None)
+    studyArea = kwargs.get('studyArea',None)
+    ancillaryFeatures = kwargs.get('ancillaryFeatures', [])
+    # // subsetTraining = subsetTraining || null
+    trainingData = ee.FeatureCollection(trainingData)
+    imageToClassify = ee.Image(imageToClassify)
+
+    # // Subset training data to studyarea if specified
+    if studyArea and subsetTraining:
+        trainingData = trainingData.filterBounds(studyArea)
+    else:
+        trainingData = trainingData
+    # // Test withholding subset of data and classifying
+    if trainProp:
+        confMatrix = accuracyProcedure(trainingData, seed, trainProp)
+
+    #// Input bands. All data will be initially queries and only these bands
+    #// will be eventually selected for classification. 
+    predictors = ee.List(bandNames).map(
+        lambda b : ee.List(coefs).map( lambda i : ee.String(b).cat('_').cat(i))
+    ).flatten().cat(ancillaryFeatures)
+    inputList = getInputFeatures(1, imageToClassify, predictors, bandNames, ancillary)
+    inputFeatures = inputList[0]
+
+    # // Train the classifier
+    trained = classifier.train(**{
+    'features': trainingData,
+    'classProperty': classProperty,
+    'inputProperties': inputFeatures
+    })
+
+    # // Map over segments
+    def seg_bands(seg):
+        # // Get inputs bands for this segment 
+        inputList = getInputFeatures(seg, imageToClassify, predictors, bandNames, ancillary)
+        inputFeatures = inputList[0]
+        bands = inputList[1]
+        segStr = ee.String('S').cat(ee.String(ee.Number(seg).int8()))
+        className = segStr.cat('_classification')
+        startName = segStr.cat('_tStart')
+        tEnd = segStr.cat('_tEnd')
+
+        return bands \
+            .select(inputFeatures) \
+            .classify(trained) \
+            .updateMask(imageToClassify.select(startName).neq(0)) \
+            .rename([className]) \
+            .int()
+    segmentsClassified = ee.List.sequence(1, numberOfSegments).map(seg_bands)
+
+    # // segmentsClassified is returned as a list so first convert to Collection
+    classified = ee.ImageCollection(segmentsClassified)
+
+    # // When reducing to bands the names change and gives an error upon export
+    bns = ee.List(classified.map(lambda i : i.set('bn', i.bandNames())) \
+        .aggregate_array('bn')) \
+        .flatten()
+
+    # // Reduce to bands and rename to original band names
+    classified = classified.toBands().rename(bns)
+    return classified
