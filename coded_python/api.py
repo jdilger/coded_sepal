@@ -168,6 +168,29 @@ def prep_samples(samples:ee.FeatureCollection, output:dict, generalParams:dict)-
     
     return samples.map(prep_sample)
 
+def run_classification(output,generalParams,classParams):
+    
+    # // Run classification
+    # note: stopping here, need to pythonify utils classification classifysegments and find py equlievent of apply()
+    # note: should be able to pass classParams into function.
+    output['Layers']['classificationRaw'] = classification.classifySegments(**classParams)
+
+    # think about when this should be run
+    if output['Layers']['mask'] is None:
+        output['Layers']['mask'] = output['Layers']['classificationRaw'].select(0).eq(generalParams['forestValue'])
+
+    tMags = output['Layers']['formattedChangeOutput'].select('.*NDFI_MAG').lt(0) \
+        .select(ee.List.sequence(0, len(generalParams['segs']) - 2)) 
+    factor = ee.Image(1).addBands(tMags)
+    output['Layers']['classificationRaw'] = output['Layers']['classificationRaw'].multiply(factor).selfMask()
+
+    output['Layers']['classification'] = output['Layers']['classificationRaw'] \
+        .select(ee.List.sequence(1, len(generalParams['segs']) - 1)) \
+        .int8()
+
+    output['Layers']['classification'] = output['Layers']['classification'].updateMask(output['Layers']['mask'])
+    output['Layers']['magnitude'] = output['Layers']['formattedChangeOutput'].select('.*NDFI_MAG')
+
 def coded(params: dict):
     if params is None:
         return 'Missing parameter object'
@@ -217,17 +240,11 @@ def coded(params: dict):
 
     else:
         classParams['trainingData'] = params.get('training')
-
-    classParams['imageToClassify'] = output['Layers']['formattedChangeOutput']
     # TODO: note, should prep exit? does unprepped data get coefs added anyways? might be able to remove if/else
-    vals = classParams.keys()
-    # // Run classification
-    # note: stopping here, need to pythonify utils classification classifysegments and find py equlievent of apply()
-    # note: should be able to pass classParams into function.
-    output['Layers']['classificationRaw'] = classification.classifySegments(**classParams)
-    tMags = output['Layers']['formattedChangeOutput'].select('.*NDFI_MAG').lt(0) \
-        .select(ee.List.sequence(0, len(generalParams['segs']) - 2)) 
-    return  tMags
+    classParams['imageToClassify'] = output['Layers']['formattedChangeOutput']
+
+    run_classification(output,generalParams,classParams)
+    return  output['Layers']['magnitude'] 
 
 
 if __name__ == "__main__":
