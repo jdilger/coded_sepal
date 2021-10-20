@@ -17,15 +17,16 @@ ee.Initialize()
 # */ 
 def getInputFeatures(seg, imageToClassify, predictors, bandNames, ancillary):
 
-    str = ee.String('S').cat(ee.String(ee.Number(seg).int8())).cat('_.*')
+    # str = ee.String('S').cat(ee.String(ee.Number(seg).int8())).cat('_.*')
+    _str = ee.String('S').cat(ee.String( str(int(seg) ))).cat('_.*')
     # // Another string to remove segment prefix
-    str2 = ee.String('S').cat(ee.String(ee.Number(seg).int8())).cat('_')
+    _str2 = ee.String('S').cat(ee.String( str(int(seg)))).cat('_')
 
     # // Select bands to classify and add ancillary
-    bands = imageToClassify.select([str])
+    bands = imageToClassify.select([_str])
 
     # // Rename without prefix
-    renamedBands = bands.bandNames().map(lambda bn : ee.String(ee.String(bn).replace('_coef_','_').replace('_COEF_','_').split(str2).get(1)))
+    renamedBands = bands.bandNames().map(lambda bn : ee.String(ee.String(bn).replace('_coef_','_').replace('_COEF_','_').split(_str2).get(1)))
 
     bands = bands.rename(renamedBands)
 
@@ -179,7 +180,8 @@ def classifySegments(imageToClassify, numberOfSegments, bandNames,
         inputList = getInputFeatures(seg, imageToClassify, predictors, bandNames, ancillary)
         inputFeatures = inputList[0]
         bands = inputList[1]
-        segStr = ee.String('S').cat(ee.String(ee.Number(seg).int8()))
+        # segStr = ee.String('S').cat(ee.String(ee.Number(seg).int8()))
+        segStr = ee.String('S').cat(ee.String(str(int(seg))))
         className = segStr.cat('_classification')
         startName = segStr.cat('_tStart')
         tEnd = segStr.cat('_tEnd')
@@ -190,7 +192,9 @@ def classifySegments(imageToClassify, numberOfSegments, bandNames,
             .updateMask(imageToClassify.select(startName).neq(0)) \
             .rename([className]) \
             .int()
-    segmentsClassified = ee.List.sequence(1, numberOfSegments).map(seg_bands)
+    client_list = range(1,numberOfSegments+1)
+    # segmentsClassified = ee.List.sequence(1, numberOfSegments).map(seg_bands)
+    segmentsClassified = list(map(lambda i : seg_bands(i), client_list))
 
     # // segmentsClassified is returned as a list so first convert to Collection
     classified = ee.ImageCollection(segmentsClassified)
