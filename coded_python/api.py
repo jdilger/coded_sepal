@@ -12,6 +12,7 @@ container_folder = os.path.abspath(os.path.join(
 sys.path.insert(0, container_folder)
 import ee
 from coded_python.ccdc import ccdc
+from coded_python.ccdc import classification
 from coded_python.image_collections import simple_cols as cs
 from coded_python.utils import exporting
 
@@ -222,9 +223,11 @@ def coded(params: dict):
     vals = classParams.keys()
     # // Run classification
     # note: stopping here, need to pythonify utils classification classifysegments and find py equlievent of apply()
-    output['Layers']['classificationRaw'] = utils.Classification.classifySegments.apply(null, vals)
-
-    return vals
+    # note: should be able to pass classParams into function.
+    output['Layers']['classificationRaw'] = classification.classifySegments(**classParams)
+    tMags = output['Layers']['formattedChangeOutput'].select('.*NDFI_MAG').lt(0) \
+        .select(ee.List.sequence(0, len(generalParams['segs']) - 2)) 
+    return  tMags
 
 
 if __name__ == "__main__":
@@ -236,13 +239,14 @@ if __name__ == "__main__":
 
     # t = coded(not_prepped)
     t = coded(prepped)
-    print(t)
+    # print(t)
     # collection = t
     # description = 'python-js-ccdc'
     # bucket = 'gee-upload'
     # assetid = 'projects/python-coded/assets/tests/prepped/python_prepped_samples'
     # exporting.export_table_asset(collection,description,assetid)
     # print(t.getInfo())
+    print(t.getInfo())
     # print(t.size().getInfo())
     # print(t.first().propertyNames().getInfo())
     # print(t.limit(2).getInfo())
