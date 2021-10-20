@@ -244,7 +244,42 @@ def coded(params: dict):
     classParams['imageToClassify'] = output['Layers']['formattedChangeOutput']
 
     run_classification(output,generalParams,classParams)
-    return  output['Layers']['magnitude'] 
+
+    # // ----------------- Post-process
+    tBreaks = output['Layers']['formattedChangeOutput'].select('.*tBreak').select(ee.List.sequence(0, len(generalParams['segs']) - 2))
+    tBreaksInterval = tBreaks.floor().gte(ee.Number(generalParams['startYear'])).And(tBreaks.floor().lte(ee.Number(generalParams['endYear'])))
+    output['Layers']['classificationStudyPeriod'] =  output['Layers']['classification'].updateMask(tBreaksInterval)
+
+    deg = output['Layers']['classificationStudyPeriod'].eq(generalParams['forestValue']).reduce(ee.Reducer.max()).rename('Degradation')
+    defor = output['Layers']['classificationStudyPeriod'].neq(generalParams['forestValue']).reduce(ee.Reducer.max()).rename('Deforestation')
+    both = deg.And(defor)
+    output['Layers']['Degradation'] = deg.And(both.Not()).selfMask().int8()
+    output['Layers']['Deforestation'] = defor.And(both.Not()).selfMask().int8()
+    output['Layers']['Both'] = both.selfMask().int8()
+    # note from   classificationStudyPeriod to both all return errors if some data are missing values...
+    # some how when we get to the end it works though, so is this needed?
+    dateOfDegradation = output['Layers']['classificationStudyPeriod'] \
+        .eq(generalParams['forestValue']) \
+        .multiply(tBreaks) \
+        .multiply(tBreaksInterval)
+    
+    dateOfDeforestation = output['Layers']['classificationStudyPeriod'] \
+        .neq(generalParams['forestValue']) \
+        .multiply(tBreaks) \
+        .multiply(tBreaksInterval)
+  
+    output['Layers']['DatesOfDegradation'] = dateOfDegradation
+    output['Layers']['DatesOfDeforestation'] = dateOfDeforestation
+    
+    # // Make single layer stratification
+    stratification = output['Layers']['mask'].remap([0,1],[2,1]) \
+        .where(output['Layers']['Degradation'], 3) \
+        .where(output['Layers']['Deforestation'], 4) \
+        .where(output['Layers']['Both'], 5)
+  
+    output['Layers']['Stratification'] = stratification.rename('stratification').int8()
+  
+    return   output
 
 
 if __name__ == "__main__":
@@ -253,17 +288,18 @@ if __name__ == "__main__":
     # p = {'studyArea': aoi, 'start': '2018-01-01', 'end': '2020-12-31', 'prepTraining': True,
     #      'training': ee.FeatureCollection("projects/python-coded/assets/tests/test_training")}
     from coded_python.data.testing.testing_dicts import prepped, not_prepped
-
+    # test with filtering out null samples
+    prepped['training'] = prepped['training'].filterMetadata('GV_COS','not_equals',None)
+    print(prepped)
     # t = coded(not_prepped)
     t = coded(prepped)
-    # print(t)
+    print(t)
     # collection = t
     # description = 'python-js-ccdc'
     # bucket = 'gee-upload'
     # assetid = 'projects/python-coded/assets/tests/prepped/python_prepped_samples'
     # exporting.export_table_asset(collection,description,assetid)
     # print(t.getInfo())
-    print(t.getInfo())
     # print(t.size().getInfo())
     # print(t.first().propertyNames().getInfo())
     # print(t.limit(2).getInfo())
@@ -271,5 +307,5 @@ if __name__ == "__main__":
     #
     # print(t.bandNames().getInfo())
 
-    # exporting.export_img(t, aoi, 'ccdc_python_coefsForTraining_wth',
+    # exporting.export_img(t, prepped['studyArea'], 'python_stratification',
     #  'projects/python-coded/assets/tests/', 30, None, False, True)
