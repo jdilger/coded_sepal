@@ -116,7 +116,7 @@ def make_change_detection_params(params: dict, **kwargs):
         'dateFormat': 1,
         'minObservations': params.get('minObservations', 3),
         'chiSquareProbability': params.get('chiSquareProbability', .9),
-        'breakpointBands': params.get('breakpointBands', ['NDFI']),
+        # 'breakpointBands': params.get('breakpointBands', ['NDFI']), #TODO: ask eric about why this is here?
     }
     return changeDetectionParams
 
@@ -169,13 +169,13 @@ def prep_samples(samples:ee.FeatureCollection, output:dict, generalParams:dict)-
     return samples.map(prep_sample)
 
 def run_classification(output,generalParams,classParams):
-    
+    #TODO : anywhere NDFI is string maybe replace w breakpoint_bands?
     # // Run classification
     # note: stopping here, need to pythonify utils classification classifysegments and find py equlievent of apply()
     # note: should be able to pass classParams into function.
     output['Layers']['classificationRaw'] = classification.classifySegments(**classParams)
 
-    # think about when this should be run
+    # think about when this should be run, TODO: where is there another mask check here?? see mask check before prep_samples
     if output['Layers']['mask'] is None:
         output['Layers']['mask'] = output['Layers']['classificationRaw'].select(0).eq(generalParams['forestValue'])
 
@@ -191,19 +191,77 @@ def run_classification(output,generalParams,classParams):
     output['Layers']['classification'] = output['Layers']['classification'].updateMask(output['Layers']['mask'])
     output['Layers']['magnitude'] = output['Layers']['formattedChangeOutput'].select('.*NDFI_MAG')
 
+def degradation_and_deforestation(output,generalParams):
+    deg = output['Layers']['classificationStudyPeriod'].eq(generalParams['forestValue']).reduce(ee.Reducer.max()).rename('Degradation')
+    defor = output['Layers']['classificationStudyPeriod'].neq(generalParams['forestValue']).reduce(ee.Reducer.max()).rename('Deforestation')
+    both = deg.And(defor)
+    return deg, defor, both
+
+def tbreaks(output, generalParams):
+    tBreaks = output['Layers']['formattedChangeOutput'].select('.*tBreak').select(ee.List.sequence(0, len(generalParams['segs']) - 2))
+    tBreaksInterval = tBreaks.floor().gte(ee.Number(generalParams['startYear'])).And(tBreaks.floor().lte(ee.Number(generalParams['endYear'])))
+
+    return tBreaks, tBreaksInterval
+
+def make_degradation_and_deforestation(output, generalParams):
+    tBreaks, tBreaksInterval = tbreaks(output, generalParams)
+    output['Layers']['classificationStudyPeriod'] =  output['Layers']['classification'].updateMask(tBreaksInterval)
+    deg, defor, both = degradation_and_deforestation(output, generalParams)
+
+    output['Layers']['Degradation'] = deg.And(both.Not()).selfMask().int8()
+    output['Layers']['Deforestation'] = defor.And(both.Not()).selfMask().int8()
+    output['Layers']['Both'] = both.selfMask().int8()
+    # note from   classificationStudyPeriod to both all return errors if some data are missing values...
+    # some how when we get to the end it works though, so is this needed?
+    dateOfDegradation = output['Layers']['classificationStudyPeriod'] \
+        .eq(generalParams['forestValue']) \
+        .multiply(tBreaks) \
+        .multiply(tBreaksInterval)
+    
+    dateOfDeforestation = output['Layers']['classificationStudyPeriod'] \
+        .neq(generalParams['forestValue']) \
+        .multiply(tBreaks) \
+        .multiply(tBreaksInterval)
+
+    output['Layers']['DatesOfDegradation'] = dateOfDegradation
+    output['Layers']['DatesOfDeforestation'] = dateOfDeforestation
+
+def make_stratification(output):
+    # // Make single layer stratification
+    stratification = output['Layers']['mask'].remap([0,1],[2,1]) \
+        .where(output['Layers']['Degradation'], 3) \
+        .where(output['Layers']['Deforestation'], 4) \
+        .where(output['Layers']['Both'], 5)
+
+    output['Layers']['Stratification'] = stratification.rename('stratification').int8()
+
 def coded(params: dict):
+    '''CODED algorithm
+
+    Args:
+        params (dict): Parameter dictionary that contains the key-word arguments below
+            start (str): start date to filter image collection by e.g. "2018-01-01"
+            end (str): end date to filter image collection by e.g. "2020-12-31"
+            prepTraining (bool): boolean argument to generate, sample, and export coefficients for training data (make CODED run faster) 
+            studyarea (ee.FeatureCollection): The study area.
+            training (ee.FeatureCollection): Training points that include a forest value and 'year' property for sampling coefficients
+            forestValue (int): The value of forest in the input mask 
+            classBands (list): class band def: default ['NDFI', 'GV', 'Shade', 'NPV', 'Soil']
+            breakpointBands (list): ????
+            startYear (int): CODED start year
+            endYear (int): CODED end year
+    Returns:
+        [type]: [description]
+    '''
     if params is None:
         return 'Missing parameter object'
 
     generalParams = make_general_params(params)
-
     # // CODED Change Detection Parameters
-
     changeDetectionParams = make_change_detection_params(
         params, region=generalParams['studyArea'], start=params['start'], end=params['end'])
-
+    # Class parameter dictionary 
     classParams = make_class_params(generalParams)
-
     # // Output Dictionary
     output = make_output_dict(changeDetectionParams, generalParams)
 
@@ -230,55 +288,21 @@ def coded(params: dict):
     build_ccdc_image(output, generalParams)
     #  Format classification parameters and extract values
     prep = params.get('prepTraining', False)
+
     if prep:
         classParams['trainingData'] = prep_samples(params.get('training'), output, generalParams)
         # TODO how to handel exporting table? do we even want prep training in sepal? prob
-        # description = 'python-js-ccdc'
-        # assetid = 'projects/python-coded/assets/tests/prepped/python_prepped_samples'
-        # exporting.export_table_asset(collection,description,assetid)
         return classParams['trainingData']
-
     else:
         classParams['trainingData'] = params.get('training')
-    # TODO: note, should prep exit? does unprepped data get coefs added anyways? might be able to remove if/else
+    # TODO: note, should prep exit or try to continue?
     classParams['imageToClassify'] = output['Layers']['formattedChangeOutput']
 
     run_classification(output,generalParams,classParams)
-
     # // ----------------- Post-process
-    tBreaks = output['Layers']['formattedChangeOutput'].select('.*tBreak').select(ee.List.sequence(0, len(generalParams['segs']) - 2))
-    tBreaksInterval = tBreaks.floor().gte(ee.Number(generalParams['startYear'])).And(tBreaks.floor().lte(ee.Number(generalParams['endYear'])))
-    output['Layers']['classificationStudyPeriod'] =  output['Layers']['classification'].updateMask(tBreaksInterval)
+    make_degradation_and_deforestation(output, generalParams)
+    make_stratification(output)
 
-    deg = output['Layers']['classificationStudyPeriod'].eq(generalParams['forestValue']).reduce(ee.Reducer.max()).rename('Degradation')
-    defor = output['Layers']['classificationStudyPeriod'].neq(generalParams['forestValue']).reduce(ee.Reducer.max()).rename('Deforestation')
-    both = deg.And(defor)
-    output['Layers']['Degradation'] = deg.And(both.Not()).selfMask().int8()
-    output['Layers']['Deforestation'] = defor.And(both.Not()).selfMask().int8()
-    output['Layers']['Both'] = both.selfMask().int8()
-    # note from   classificationStudyPeriod to both all return errors if some data are missing values...
-    # some how when we get to the end it works though, so is this needed?
-    dateOfDegradation = output['Layers']['classificationStudyPeriod'] \
-        .eq(generalParams['forestValue']) \
-        .multiply(tBreaks) \
-        .multiply(tBreaksInterval)
-    
-    dateOfDeforestation = output['Layers']['classificationStudyPeriod'] \
-        .neq(generalParams['forestValue']) \
-        .multiply(tBreaks) \
-        .multiply(tBreaksInterval)
-  
-    output['Layers']['DatesOfDegradation'] = dateOfDegradation
-    output['Layers']['DatesOfDeforestation'] = dateOfDeforestation
-    
-    # // Make single layer stratification
-    stratification = output['Layers']['mask'].remap([0,1],[2,1]) \
-        .where(output['Layers']['Degradation'], 3) \
-        .where(output['Layers']['Deforestation'], 4) \
-        .where(output['Layers']['Both'], 5)
-  
-    output['Layers']['Stratification'] = stratification.rename('stratification').int8()
-  
     return   output
 
 
