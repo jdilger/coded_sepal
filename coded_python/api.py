@@ -73,6 +73,7 @@ def unmix(image: ee.Image, endmembers: dict = None, cloudThreshold: float = None
 
 def make_class_params(generalParams):
     # // Classification Parameter
+    # TODO: clean this and ccdc.classifySegments up so None properties can be removed from dict.
     classParams = {
         'imageToClassify': None,
         'numberOfSegments': len(generalParams['segs']),
@@ -82,7 +83,7 @@ def make_class_params(generalParams):
         'trainingData': None,
         'classifier': ee.Classifier.smileRandomForest(150),
         'studyArea': generalParams['studyArea'],
-        'classProperty': 'landcover',
+        'classProperty': 'landcover',#TODO: this is the prop used for training classifier, should be parameter
         'coefs': ['INTP', 'SIN', 'COS', 'RMSE'],
         'trainProp': None,
         'seed': None,
