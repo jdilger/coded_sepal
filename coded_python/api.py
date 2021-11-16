@@ -4,7 +4,8 @@
 # utils = require('projects/GLANCE:ccdcUtilities/api')
 import sys
 import os
-from rich import print
+
+from ee import collection, imagecollection
 
 container_folder = os.path.abspath(os.path.join(
     os.path.dirname(__file__), '..'
@@ -14,11 +15,11 @@ import ee
 from coded_python.ccdc import ccdc
 from coded_python.ccdc import classification
 from coded_python.image_collections import simple_cols as cs
-from coded_python.utils import exporting
+from coded_python.params import classParams, changeDetectionParams, generalParams
 
 ee.Initialize()
 
-
+# todo: implement custom ndfi 
 class parameters:
     def __init__(self):
         self.endmembers = {
@@ -106,6 +107,32 @@ def make_general_params(params: dict):
         'endYear': params.get('endYear', None),
     }
     return generalParams
+def make_general_params_v2(params: dict, change_params : changeDetectionParams):
+    # todo: test params.collection.ee function works
+    if params.get('startYear', None) is None:
+        start_year = changeDetectionParams.collection.aggregate_min(
+        'year')
+    if params.get('endYear', None) is None:
+        end_year = changeDetectionParams.collection.aggregate_max(
+            'year')
+        
+    general_params = {
+        'segs': params.get('segs', ['S1', 'S2', 'S3', 'S4', 'S5']),
+        
+        # TODO default -> utils.Inputs.getLandsat().filterBounds(generalParams.studyArea).first().bandNames().getInfo()
+        'classBands': params.get('classBands', ['GV', 'Shade', 'NPV', 'Soil', 'NDFI']),
+        
+        'coefs': params.get('coefs', ['INTP', 'SIN', 'COS', 'RMSE', 'SLP']),
+        'forestValue': params.get('forestValue', 1),
+        
+        # TODO default ->  ee.Geometry(Map.getBounds(true))
+        'studyArea': params.get('studyArea', None),
+        
+        'mask': params.get('forestMask', None),
+        'startYear': start_year,
+        'endYear': end_year,
+    }
+    return generalParams(general_params)
 
 
 def make_change_detection_params(params: dict, **kwargs):
@@ -121,6 +148,18 @@ def make_change_detection_params(params: dict, **kwargs):
     }
     return changeDetectionParams
 
+
+def make_output_dict_v2(changeDetectionParams: changeDetectionParams, generalParams: generalParams):
+    # // Output Dictionary
+    output = {
+        'Change_Parameters': changeDetectionParams.dict(),
+        'General_Parameters': generalParams.dict(),
+        'Layers': {
+            'rawChangeOutput': None,
+            'formattedChangeOutput': None,
+            'mask': None},
+    }
+    return output
 
 def make_output_dict(changeDetectionParams: dict, generalParams: dict):
     # // Output Dictionary
@@ -141,16 +180,35 @@ def prep_collection(changeDetectionParams: dict, generalParams: dict):
         .filterBounds(generalParams['studyArea']).select(generalParams['classBands']) \
         .map(lambda i: i.set('year', i.date().get('year')))
 
+def prep_collection_v2(change: changeDetectionParams, general: generalParams):
+    change.collection = change.collection \
+        .filterBounds(general.studyArea).select(general.classBands) \
+        .map(lambda i: i.set('year', i.date().get('year')))
+
 
 def run_ccdc(output: dict, changeDetectionParams: dict):
     #   // Run CCDC/CODED
     output['Layers']['rawChangeOutput'] = ee.Algorithms.TemporalSegmentation.Ccdc(
         **changeDetectionParams)
+def run_ccdc_v2(output: dict, change:changeDetectionParams):
+    #   // Run CCDC/CODED
+    output['Layers']['rawChangeOutput'] = ee.Algorithms.TemporalSegmentation.Ccdc(
+        **{'collection': change.collection,
+        'minNumOfYearsScaler' : change.minNumOfYearsScaler, 
+        'dateFormat' : change.dateFormat,
+        'minObservations' : change.minObservations,
+        'chiSquareProbability' : change.chiSquareProbability,
+        'lambda' : change._lambda})
+        # change.dict_ee())
 
 
 def build_ccdc_image(output: dict, generalParams: dict):
     output['Layers']['formattedChangeOutput'] = ccdc.buildCcdImage(output['Layers']['rawChangeOutput'],
                                                                    len(generalParams['segs']), generalParams['classBands'])
+
+def build_ccdc_image_v2(output: dict, general : generalParams):
+    output['Layers']['formattedChangeOutput'] = ccdc.buildCcdImage(output['Layers']['rawChangeOutput'],
+                                                                   len(general.segs), general.classBands)
 
 def prep_samples(samples:ee.FeatureCollection, output:dict, generalParams:dict)-> ee.FeatureCollection:
     """ prepares sample collection by adding ccdc coefs from the formatted change output"""
@@ -187,6 +245,30 @@ def run_classification(output,generalParams,classParams):
 
     output['Layers']['classification'] = output['Layers']['classificationRaw'] \
         .select(ee.List.sequence(1, len(generalParams['segs']) - 1)) \
+        .int8()
+
+    output['Layers']['classification'] = output['Layers']['classification'].updateMask(output['Layers']['mask'])
+    output['Layers']['magnitude'] = output['Layers']['formattedChangeOutput'].select('.*NDFI_MAG')
+
+def run_classification_v2(output:dict,general: generalParams, classp :classParams):
+    #TODO : anywhere NDFI is string maybe replace w breakpoint_bands?
+    # // Run classification
+    # note: stopping here, need to pythonify utils classification classifysegments and find py equlievent of apply()
+    # note: should be able to pass classParams into function.
+    output['Layers']['classificationRaw'] = classification.classifySegments(classp.dict())
+
+    # think about when this should be run, TODO: where is there another mask check here?? see mask check before prep_samples
+    if output['Layers']['mask'] is None:
+        output['Layers']['mask'] = output['Layers']['classificationRaw'].select(0).eq(general.forestValue)
+
+    tMags = output['Layers']['formattedChangeOutput'].select('.*NDFI_MAG').lt(0) \
+        .select(ee.List.sequence(0, len(general.segs) - 2)) 
+    
+    factor = ee.Image(1).addBands(tMags)
+    output['Layers']['classificationRaw'] = output['Layers']['classificationRaw'].multiply(factor).selfMask()
+
+    output['Layers']['classification'] = output['Layers']['classificationRaw'] \
+        .select(ee.List.sequence(1, len(general.segs) - 1)) \
         .int8()
 
     output['Layers']['classification'] = output['Layers']['classification'].updateMask(output['Layers']['mask'])
@@ -235,6 +317,31 @@ def make_stratification(output):
         .where(output['Layers']['Both'], 5)
 
     output['Layers']['Stratification'] = stratification.rename('stratification').int8()
+
+
+def coded_v2(input_gen_params: dict, input_change_params:dict, input_class_params:dict):
+    change_params = changeDetectionParams(**input_change_params)
+    # step 2  make general params
+    general_params = generalParams(**input_gen_params)
+    # check if start and end year are input
+    if general_params.startYear is None:
+        startyear = change_params.get_start_end_from_col('start')
+    if general_params.endYear is None:
+        endyear = change_params.get_start_end_from_col('end')
+    
+    output = make_output_dict_v2(change_params, general_params)
+    prep_collection_v2(change_params, general_params)
+    run_ccdc_v2(output, change_params)
+    build_ccdc_image_v2(output, general_params)
+
+    # make classification params
+    image_to_classify = output['Layers']['formattedChangeOutput']
+    class_params = classParams(**input_class_params, imageToClassify=image_to_classify)
+    if class_params.prepTraining:
+        class_params.trainingData = class_params.prep_samples(general_params)
+
+    run_classification_v2(output,general_params,class_params)
+    return output
 
 def coded(params: dict):
     '''CODED algorithm
@@ -306,31 +413,3 @@ def coded(params: dict):
 
     return   output
 
-
-if __name__ == "__main__":
-    # aoi = ee.FeatureCollection(
-    #     'projects/python-coded/assets/tests/test_geometry')
-    # p = {'studyArea': aoi, 'start': '2018-01-01', 'end': '2020-12-31', 'prepTraining': True,
-    #      'training': ee.FeatureCollection("projects/python-coded/assets/tests/test_training")}
-    from coded_python.data.testing.testing_dicts import prepped, not_prepped
-    # test with filtering out null samples
-    prepped['training'] = prepped['training'].filterMetadata('GV_COS','not_equals',None)
-    print(prepped)
-    # t = coded(not_prepped)
-    t = coded(prepped)
-    print(t)
-    # collection = t
-    # description = 'python-js-ccdc'
-    # bucket = 'gee-upload'
-    # assetid = 'projects/python-coded/assets/tests/prepped/python_prepped_samples'
-    # exporting.export_table_asset(collection,description,assetid)
-    # print(t.getInfo())
-    # print(t.size().getInfo())
-    # print(t.first().propertyNames().getInfo())
-    # print(t.limit(2).getInfo())
-
-    #
-    # print(t.bandNames().getInfo())
-
-    # exporting.export_img(t, prepped['studyArea'], 'python_stratification',
-    #  'projects/python-coded/assets/tests/', 30, None, False, True)
