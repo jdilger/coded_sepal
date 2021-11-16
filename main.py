@@ -1,9 +1,12 @@
-from ee import collection
+import ee
 from coded_python.data.testing.testing_dicts import prepped, not_prepped
-from coded_python.api import coded, coded_v2
+from coded_python.api import coded
+from coded_python.api_v2 import coded_v2, post_process
 from coded_python.utils import exporting
 from coded_python.image_collections import simple_cols as cs
 from rich import print
+
+ee.Initialize()
 # test with filtering out null samples
 prepped['training'] = prepped['training'].filterMetadata('GV_COS','not_equals',None)
 print(prepped)
@@ -14,7 +17,8 @@ change = {
     end=prepped['end'])
 }
 general = {
-    'studyArea' : prepped['studyArea']
+    'studyArea' : prepped['studyArea'],
+    'mask':ee.Image(1)
 }
 classp = {
     'trainingData' : prepped['training']
@@ -34,7 +38,10 @@ t2 = coded_v2(general,change,classp)
 
 #
 print(t)
+print('///////////////////////////')
 print(t2)
+print('///////////////////////////')
+print(post_process(t2))
 # # current version w dicts
 # img = t['Layers']['Stratification']
 # exporting.export_img(
