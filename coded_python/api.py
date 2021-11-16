@@ -255,7 +255,20 @@ def run_classification_v2(output:dict,general: generalParams, classp :classParam
     # // Run classification
     # note: stopping here, need to pythonify utils classification classifysegments and find py equlievent of apply()
     # note: should be able to pass classParams into function.
-    output['Layers']['classificationRaw'] = classification.classifySegments(classp.dict())
+    output['Layers']['classificationRaw'] = classification.classifySegments(numberOfSegments=classp.numberOfSegments,
+        bandNames=classp.bandNames,
+        ancillary=classp.ancillary,
+        ancillaryFeatures=classp.ancillaryFeatures,
+        trainingData=classp.trainingData,
+        classifier=classp.classifier,
+        classProperty=classp.classProperty,
+        coefs=classp.coefs,
+        seed=classp.seed,
+        subsetTraining=classp.subsetTraining,
+        studyArea= classp.studyArea,
+        trainProp=classp.trainProp,
+        imageToClassify=classp.imageToClassify
+    )
 
     # think about when this should be run, TODO: where is there another mask check here?? see mask check before prep_samples
     if output['Layers']['mask'] is None:
@@ -336,7 +349,12 @@ def coded_v2(input_gen_params: dict, input_change_params:dict, input_class_param
 
     # make classification params
     image_to_classify = output['Layers']['formattedChangeOutput']
-    class_params = classParams(**input_class_params, imageToClassify=image_to_classify)
+    class_params = classParams(**input_class_params,
+        imageToClassify=image_to_classify,
+        bandNames=general_params.classBands,
+        studyArea=general_params.studyArea,
+        numberOfSegments=len(general_params.segs)
+        )
     if class_params.prepTraining:
         class_params.trainingData = class_params.prep_samples(general_params)
 
