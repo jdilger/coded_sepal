@@ -58,10 +58,10 @@ class generalParams:
 @dataclass
 class classParams:
     imageToClassify: ee.Image 
-    bandNames:  generalParams
+    bandNames:  Union[List[str],generalParams]
     trainingData: Union[ee.FeatureCollection, generalParams]
     studyArea: Union[generalParams, ee.FeatureCollection, ee.Geometry]
-    numberOfSegments: Union[generalParams,List[str]]
+    numberOfSegments: int
 
     classProperty: str = 'landcover'#TODO: this is the prop used for training classifier, should be parameter
     coefs: List[str] = field(default_factory = lambda:['INTP', 'SIN', 'COS', 'RMSE'])
@@ -102,4 +102,21 @@ class classParams:
 
             return sampleForTraining
         
-        return samples.map(prep_sample)
+        return ee.FeatureCollection(samples.map(prep_sample))
+
+@dataclass
+class OutputLayers:
+    rawChangeOutput: ee.Image
+    formattedChangeOutput: ee.Image
+    mask : ee.Image
+    classificationRaw :ee.Image
+    classification : ee.Image
+    magnitude : ee.Image
+
+
+
+@dataclass
+class Output:
+    Change_Parameters: changeDetectionParams
+    General_Parameters: generalParams
+    Layers: OutputLayers
