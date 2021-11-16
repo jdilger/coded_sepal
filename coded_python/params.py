@@ -38,7 +38,7 @@ class changeDetectionParams:
         elif start_or_end.lower() == 'end':
             year = col.aggregate_max(
                 'year')
-        return year
+        return ee.Number(year)
 
 @dataclass
 class generalParams:
