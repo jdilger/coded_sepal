@@ -338,9 +338,9 @@ def coded_v2(input_gen_params: dict, input_change_params:dict, input_class_param
     general_params = generalParams(**input_gen_params)
     # check if start and end year are input
     if general_params.startYear is None:
-        startyear = change_params.get_start_end_from_col('start')
+        general_params.startYear = change_params.get_start_end_from_col('start')
     if general_params.endYear is None:
-        endyear = change_params.get_start_end_from_col('end')
+        general_params.endYear = change_params.get_start_end_from_col('end')
     
     output = make_output_dict_v2(change_params, general_params)
     prep_collection_v2(change_params, general_params)
