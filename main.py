@@ -16,7 +16,9 @@ change = {
 general = {
     'studyArea' : prepped['studyArea']
 }
-classp = {}
+classp = {
+    'trainingData' : prepped['training']
+}
 t = coded(prepped)
 t2 = coded_v2(general,change,classp)
 # print(t)
