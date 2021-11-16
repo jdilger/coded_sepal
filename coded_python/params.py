@@ -78,9 +78,8 @@ class classParams:
         return asdict(self)
 
     def prep_samples(self, general : generalParams, samples:ee.FeatureCollection = None)-> ee.FeatureCollection:
-
         """ prepares sample collection by adding ccdc coefs from the formatted change output"""
-        # // Get training data coefficients
+
         if samples is None:
             samples = self.trainingData
         
@@ -120,3 +119,13 @@ class Output:
     Change_Parameters: changeDetectionParams
     General_Parameters: generalParams
     Layers: OutputLayers
+
+@dataclass
+class PostProcess:
+    Stratification:ee.Image
+    Degradation: ee.Image
+    Deforestation: ee.Image
+    Both : ee.Image
+    classificationStudyPeriod :ee.Image
+    dateOfDeforestation : ee.Image
+    dateOfDegradation : ee.Image
