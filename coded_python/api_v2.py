@@ -6,11 +6,12 @@ container_folder = os.path.abspath(os.path.join(
     os.path.dirname(__file__), '..'
 ))
 sys.path.insert(0, container_folder)
+
 import ee
 from coded_python.ccdc import ccdc
 from coded_python.ccdc import classification as rf
 from coded_python.image_collections import simple_cols as cs
-from coded_python.params import classParams, changeDetectionParams, generalParams, Output, OutputLayers
+from coded_python.params import classParams, changeDetectionParams, generalParams, Output, OutputLayers, PostProcess
 
 ee.Initialize()
 
@@ -37,8 +38,8 @@ def run_classification_v2(general: generalParams,
         trainProp=classp.trainProp,
         imageToClassify=classp.imageToClassify
     )
-
-    if general.mask is None:
+    mask = general.mask
+    if mask is None:
         mask = classificationRaw.select(0).eq(general.forestValue)
 
     tMags = classp.imageToClassify.select('.*NDFI_MAG').lt(0) \
@@ -110,3 +111,77 @@ def coded_v2(input_gen_params: dict, input_change_params:dict, input_class_param
     return Output(Change_Parameters=change_params,
         General_Parameters=general_params,
         Layers=output_layers)
+
+
+# postprocessing
+def degradation_and_deforestation(classificationStudyPeriod:ee.Image, forestValue:int):
+    deg = classificationStudyPeriod.eq(forestValue) \
+        .reduce(ee.Reducer.max()).rename('Degradation')
+    defor = classificationStudyPeriod.neq(forestValue) \
+        .reduce(ee.Reducer.max()).rename('Deforestation')
+    both = deg.And(defor)
+    return deg, defor, both
+
+def tbreaks(output : Output):
+    tBreaks = output.Layers.formattedChangeOutput \
+        .select('.*tBreak') \
+        .select(ee.List.sequence(0,
+             len(output.General_Parameters.segs) - 2)
+             )
+    tBreaksInterval = tBreaks.floor().gte(ee.Number(output.General_Parameters.startYear)) \
+        .And(tBreaks.floor().lte(ee.Number(output.General_Parameters.endYear)))
+
+    return tBreaks, tBreaksInterval
+
+def make_degradation_and_deforestation(output: Output):
+    tBreaks, tBreaksInterval = tbreaks(output)
+    classificationStudyPeriod =  output.Layers.classification.updateMask(tBreaksInterval)
+    deg, defor, both = degradation_and_deforestation(
+        classificationStudyPeriod,
+        output.General_Parameters.forestValue)
+
+    Degradation = deg.And(both.Not()).selfMask().int8()
+    Deforestation = defor.And(both.Not()).selfMask().int8()
+    Both = both.selfMask().int8()
+    # note from   classificationStudyPeriod to both all return errors if some data are missing values...
+    # some how when we get to the end it works though, so is this needed?
+    dateOfDegradation = classificationStudyPeriod \
+        .eq(output.General_Parameters.forestValue) \
+        .multiply(tBreaks) \
+        .multiply(tBreaksInterval)
+    
+    dateOfDeforestation = classificationStudyPeriod \
+        .neq(output.General_Parameters.forestValue) \
+        .multiply(tBreaks) \
+        .multiply(tBreaksInterval)
+
+    Degradation_Deforestation = namedtuple("Degradation_Deforestation",
+         "Deforestation Degradation Both dateOfDeforestation dateOfDegradation classificationStudyPeriod")
+    return Degradation_Deforestation(Deforestation,Degradation, Both, dateOfDeforestation, dateOfDegradation, classificationStudyPeriod)
+
+def make_stratification(mask:ee.Image,degradation:ee.Image, deforestation:ee.Image, both:ee.Image):
+    # // Make single layer stratification
+    stratification = mask.remap([0,1],[2,1]) \
+        .where(degradation, 3) \
+        .where(deforestation, 4) \
+        .where(both, 5)
+
+    return stratification.rename('stratification').int8()
+
+def post_process(outputs :Output):
+    DegDefor = make_degradation_and_deforestation(outputs)
+
+    stratification = make_stratification(mask=outputs.General_Parameters.mask,
+        degradation=DegDefor.Degradation,
+        deforestation= DegDefor.Deforestation,
+        both=DegDefor.Both)
+    
+    return PostProcess(Stratification=stratification,
+        Degradation=DegDefor.Degradation,
+        Deforestation= DegDefor.Deforestation ,
+        Both= DegDefor.Both,
+        dateOfDeforestation = DegDefor.dateOfDeforestation,
+        dateOfDegradation = DegDefor.dateOfDegradation,
+        classificationStudyPeriod = DegDefor.classificationStudyPeriod
+        )   
+
