@@ -12,7 +12,7 @@ from rich import print
 ee.Initialize()
 
 @dataclass
-class changeDetectionParams:
+class ChangeDetectionParams:
     collection: ee.ImageCollection
     _lambda: float = 20/10000
     minNumOfYearsScaler: float = 1.33
@@ -41,7 +41,7 @@ class changeDetectionParams:
         return ee.Number(year)
 
 @dataclass
-class generalParams:
+class GeneralParams:
     studyArea : Union[ee.FeatureCollection, ee.Geometry]
     # todo: mask should not be none
     mask: Union[int,None] = None
@@ -56,11 +56,11 @@ class generalParams:
         return asdict(self)
 
 @dataclass
-class classParams:
+class ClassParams:
     imageToClassify: ee.Image 
-    bandNames:  Union[List[str],generalParams]
-    trainingData: Union[ee.FeatureCollection, generalParams]
-    studyArea: Union[generalParams, ee.FeatureCollection, ee.Geometry]
+    bandNames:  Union[List[str],GeneralParams]
+    trainingData: Union[ee.FeatureCollection, GeneralParams]
+    studyArea: Union[GeneralParams, ee.FeatureCollection, ee.Geometry]
     numberOfSegments: int
 
     classProperty: str = 'landcover'#TODO: this is the prop used for training classifier, should be parameter
@@ -77,9 +77,9 @@ class classParams:
     def dict(self):
         return asdict(self)
 
-    def prep_samples(self, general : generalParams, samples:ee.FeatureCollection = None)-> ee.FeatureCollection:
+    def prep_samples(self, general : GeneralParams, samples:ee.FeatureCollection = None)-> ee.FeatureCollection:
         """ prepares sample collection by adding ccdc coefs from the formatted change output"""
-
+        # todo: make image toclassify optional and default to self.? 
         if samples is None:
             samples = self.trainingData
         
@@ -116,8 +116,8 @@ class OutputLayers:
 
 @dataclass
 class Output:
-    Change_Parameters: changeDetectionParams
-    General_Parameters: generalParams
+    Change_Parameters: ChangeDetectionParams
+    General_Parameters: GeneralParams
     Layers: OutputLayers
 
 @dataclass
