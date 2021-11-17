@@ -6,22 +6,22 @@ container_folder = os.path.abspath(os.path.join(
     os.path.dirname(__file__), '..'
 ))
 sys.path.insert(0, container_folder)
-
-import ee
+ 
+import ee 
 from coded_python.ccdc import ccdc
 from coded_python.ccdc import classification as rf
 from coded_python.image_collections import simple_cols as cs
-from coded_python.params import classParams, changeDetectionParams, generalParams, Output, OutputLayers, PostProcess
+from coded_python.params import ClassParams, ChangeDetectionParams, GeneralParams, Output, OutputLayers, PostProcess
 
 ee.Initialize()
 
-def prep_collection_v2(change: changeDetectionParams, general: generalParams):
+def prep_collection_v2(change: ChangeDetectionParams, general: GeneralParams):
     change.collection = change.collection \
         .filterBounds(general.studyArea).select(general.classBands) \
         .map(lambda i: i.set('year', i.date().get('year')))
 
-def run_classification_v2(general: generalParams,
-        classp :classParams):
+def run_classification_v2(general: GeneralParams,
+        classp :ClassParams):
     #TODO : anywhere NDFI is string maybe replace w breakpoint_bands?
     classificationRaw = rf.classifySegments(
         numberOfSegments=classp.numberOfSegments,
@@ -59,16 +59,15 @@ def run_classification_v2(general: generalParams,
     return Out(classificationRaw, mask, classification, magnitude)
 
 def coded_v2(input_gen_params: dict, input_change_params:dict, input_class_params:dict):
-    change_params = changeDetectionParams(**input_change_params)
-    general_params = generalParams(**input_gen_params)
-    
+    change_params = ChangeDetectionParams(**input_change_params)
+    general_params = GeneralParams(**input_gen_params)
+
+    prep_collection_v2(change_params, general_params)    
     # check if start and end year are input
     if general_params.startYear is None:
         general_params.startYear = change_params.get_start_end_from_col('start')
     if general_params.endYear is None:
         general_params.endYear = change_params.get_start_end_from_col('end')
-    
-    prep_collection_v2(change_params, general_params)
 
     raw_change = ee.Algorithms.TemporalSegmentation.Ccdc(
         **{'collection': change_params.collection,
@@ -86,7 +85,7 @@ def coded_v2(input_gen_params: dict, input_change_params:dict, input_class_param
         )
 
     # make classification params
-    class_params = classParams(
+    class_params = ClassParams(
         **input_class_params,
         imageToClassify=formated_change,
         bandNames=general_params.classBands,
@@ -171,7 +170,7 @@ def make_stratification(mask:ee.Image,degradation:ee.Image, deforestation:ee.Ima
 def post_process(outputs :Output):
     DegDefor = make_degradation_and_deforestation(outputs)
 
-    stratification = make_stratification(mask=outputs.General_Parameters.mask,
+    stratification = make_stratification(mask=outputs.Layers.mask,
         degradation=DegDefor.Degradation,
         deforestation= DegDefor.Deforestation,
         both=DegDefor.Both)
@@ -182,6 +181,6 @@ def post_process(outputs :Output):
         Both= DegDefor.Both,
         dateOfDeforestation = DegDefor.dateOfDeforestation,
         dateOfDegradation = DegDefor.dateOfDegradation,
-        classificationStudyPeriod = DegDefor.classificationStudyPeriod
-        )   
+        classificationStudyPeriod = DegDefor.classificationStudyPeriod,
+        )
 
