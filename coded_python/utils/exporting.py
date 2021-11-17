@@ -49,7 +49,7 @@ def export_img(image,
     return name
 
 
-def export_image_collection(collection, export_func, geometry=None, export_path=None, export_scale=None, crs=None, test=False, test_export=False):
+def export_image_collection(collection, export_func, geometry=None, export_path=None, export_scale=None, crs=None, test=False):
     if geometry is None:
         geometry = geometry
     collection = collection.sort('system:time_start')
