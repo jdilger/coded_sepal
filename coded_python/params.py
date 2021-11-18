@@ -48,7 +48,7 @@ class GeneralParams:
     startYear: Union[int, None] = None
     endYear : Union[int,None] = None
     segs : List[str] =  field(default_factory= lambda: ['S1', 'S2', 'S3', 'S4', 'S5'])
-    classBands : List[str] =  field(default_factory= lambda: ['GV', 'Shade', 'NPV', 'Soil', 'NDFI'])
+    classBands : List[str] =  field(default_factory= lambda: ['NDFI', 'GV', 'Shade', 'NPV', 'Soil'])
     coefs : List[str] =  field(default_factory= lambda: ['INTP', 'SIN', 'COS', 'RMSE', 'SLP'])
     forestValue : int = 1
     
