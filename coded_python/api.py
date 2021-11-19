@@ -4,7 +4,6 @@
 # utils = require('projects/GLANCE:ccdcUtilities/api')
 import sys
 import os
-from rich import print
 
 container_folder = os.path.abspath(os.path.join(
     os.path.dirname(__file__), '..'
@@ -14,11 +13,10 @@ import ee
 from coded_python.ccdc import ccdc
 from coded_python.ccdc import classification
 from coded_python.image_collections import simple_cols as cs
-from coded_python.utils import exporting
 
 ee.Initialize()
 
-
+# todo: implement custom ndfi 
 class parameters:
     def __init__(self):
         self.endmembers = {
@@ -107,7 +105,6 @@ def make_general_params(params: dict):
     }
     return generalParams
 
-
 def make_change_detection_params(params: dict, **kwargs):
     # // CODED Change Detection Parameters
     changeDetectionParams = {
@@ -140,7 +137,6 @@ def prep_collection(changeDetectionParams: dict, generalParams: dict):
     changeDetectionParams['collection'] = changeDetectionParams['collection'] \
         .filterBounds(generalParams['studyArea']).select(generalParams['classBands']) \
         .map(lambda i: i.set('year', i.date().get('year')))
-
 
 def run_ccdc(output: dict, changeDetectionParams: dict):
     #   // Run CCDC/CODED
@@ -192,6 +188,7 @@ def run_classification(output,generalParams,classParams):
     output['Layers']['classification'] = output['Layers']['classification'].updateMask(output['Layers']['mask'])
     output['Layers']['magnitude'] = output['Layers']['formattedChangeOutput'].select('.*NDFI_MAG')
 
+
 def degradation_and_deforestation(output,generalParams):
     deg = output['Layers']['classificationStudyPeriod'].eq(generalParams['forestValue']).reduce(ee.Reducer.max()).rename('Degradation')
     defor = output['Layers']['classificationStudyPeriod'].neq(generalParams['forestValue']).reduce(ee.Reducer.max()).rename('Deforestation')
@@ -235,6 +232,7 @@ def make_stratification(output):
         .where(output['Layers']['Both'], 5)
 
     output['Layers']['Stratification'] = stratification.rename('stratification').int8()
+
 
 def coded(params: dict):
     '''CODED algorithm
@@ -306,31 +304,3 @@ def coded(params: dict):
 
     return   output
 
-
-if __name__ == "__main__":
-    # aoi = ee.FeatureCollection(
-    #     'projects/python-coded/assets/tests/test_geometry')
-    # p = {'studyArea': aoi, 'start': '2018-01-01', 'end': '2020-12-31', 'prepTraining': True,
-    #      'training': ee.FeatureCollection("projects/python-coded/assets/tests/test_training")}
-    from coded_python.data.testing.testing_dicts import prepped, not_prepped
-    # test with filtering out null samples
-    prepped['training'] = prepped['training'].filterMetadata('GV_COS','not_equals',None)
-    print(prepped)
-    # t = coded(not_prepped)
-    t = coded(prepped)
-    print(t)
-    # collection = t
-    # description = 'python-js-ccdc'
-    # bucket = 'gee-upload'
-    # assetid = 'projects/python-coded/assets/tests/prepped/python_prepped_samples'
-    # exporting.export_table_asset(collection,description,assetid)
-    # print(t.getInfo())
-    # print(t.size().getInfo())
-    # print(t.first().propertyNames().getInfo())
-    # print(t.limit(2).getInfo())
-
-    #
-    # print(t.bandNames().getInfo())
-
-    # exporting.export_img(t, prepped['studyArea'], 'python_stratification',
-    #  'projects/python-coded/assets/tests/', 30, None, False, True)
