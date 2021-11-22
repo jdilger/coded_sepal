@@ -179,6 +179,44 @@ def getLandsat(**kwargs):
 
     return ee.ImageCollection(indices)
 
+# /**
+#  * Mask Sentinel-2 imagery using QA band
+#  * @param {ee.Image} image Sentinel-2 reflectance image
+#  */
+def maskS2clouds(image):
+    qa = image.select('QA60')
+
+    # // Bits 10 and 11 are clouds and cirrus, respectively.
+    cloudBitMask = 1 << 10
+    cirrusBitMask = 1 << 11
+
+    # // Both flags should be set to zero, indicating clear conditions.
+    mask = qa.bitwiseAnd(cloudBitMask).eq(0).And(
+             qa.bitwiseAnd(cirrusBitMask).eq(0))
+
+    # // Return the masked and scaled data, without the QA bands.
+    return image.updateMask(mask) \
+        .select('B2', 'B3', 'B4','B8','B11','B12') \
+        .rename(['BLUE','GREEN','RED','NIR','SWIR1','SWIR2']) \
+        .divide(10000) \
+        .copyProperties(image, ["system:time_start"])
+
+
+
+# /**
+#  * Get Sentinel-2 surface reflectance data. 
+#  * Taken directly from GEE examples repo.
+#  * 
+#  * @param {ee.Geometry} roi target study area to filter data
+#  * 
+#  * @returns (ee.ImageCollection) Sentinel-2 SR and spectral indices
+#  */
+def getS2(roi):
+#   // Sentinel-2 surface reflectance data for the composite.
+    s2Sr = ee.ImageCollection('COPERNICUS/S2_SR');
+    if (roi) : s2Sr = s2Sr.filterBounds(roi)
+    s2Sr = s2Sr.map(maskS2clouds)
+    return doIndices(s2Sr)
 
 if __name__ == "__main__":
     aoi = ee.FeatureCollection(
