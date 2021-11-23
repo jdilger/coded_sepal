@@ -1,16 +1,27 @@
 # simple_cols.py
+from typing import List, Optional, Union
 import ee
+from dataclasses import dataclass, field
 ee.Initialize()
 
 
-def calcNDFI(image):
+@dataclass
+class NDFIParams:
+    bands : List[str] = field(default_factory= lambda:['BLUE','GREEN','RED','NIR','SWIR1','SWIR2'])
+    gv :  List[float] =  field(default_factory= lambda:[.0500, .0900, .0400, .6100, .3000, .1000])
+    shade :List[float] =  field(default_factory= lambda:[0, 0, 0, 0, 0, 0])
+    npv :List[float] =  field(default_factory= lambda:[.1400, .1700, .2200, .3000, .5500, .3000])
+    soil :List[float] =  field(default_factory= lambda:[.2000, .3000, .3400, .5800, .6000, .5800])
+    cloud :List[float] =  field(default_factory= lambda:[.9000, .9600, .8000, .7800, .7200, .6500])
+
+def calcNDFI(image, ndfiParams:NDFIParams):
 
     # /* Do spectral unmixing */
-    gv = [.0500, .0900, .0400, .6100, .3000, .1000]
-    shade = [0, 0, 0, 0, 0, 0]
-    npv = [.1400, .1700, .2200, .3000, .5500, .3000]
-    soil = [.2000, .3000, .3400, .5800, .6000, .5800]
-    cloud = [.9000, .9600, .8000, .7800, .7200, .6500]
+    gv = ndfiParams.gv #[.0500, .0900, .0400, .6100, .3000, .1000]
+    shade = ndfiParams.shade # [0, 0, 0, 0, 0, 0]
+    npv = ndfiParams.npv #[.1400, .1700, .2200, .3000, .5500, .3000]
+    soil = ndfiParams.soil #[.2000, .3000, .3400, .5800, .6000, .5800]
+    cloud = ndfiParams.cloud #[.9000, .9600, .8000, .7800, .7200, .6500]
     cf = .1  # // Not parameterized
     cfThreshold = ee.Image.constant(cf)
     unmixImage = ee.Image(image).unmix([gv, shade, npv, soil, cloud], True, True) \
@@ -32,14 +43,14 @@ def calcNDFI(image):
     return out
 
 
-def doIndices(collection):
-    def indices_image(image):
+def doIndices(collection, ndfiParams: NDFIParams):
+    def indices_image(image, ndfiParams:NDFIParams):
         # // NDFI function requires surface reflectance bands only
-        BANDS = ['BLUE', 'GREEN', 'RED', 'NIR', 'SWIR1', 'SWIR2']
-        NDFI = calcNDFI(image.select(BANDS))
+        BANDS = ndfiParams.bands #['BLUE', 'GREEN', 'RED', 'NIR', 'SWIR1', 'SWIR2']
+        NDFI = calcNDFI(image.select(BANDS), ndfiParams)
         return image.addBands([NDFI])
 
-    return collection.map(lambda i: indices_image(i))
+    return collection.map(lambda i: indices_image(i, ndfiParams))
 
 
 def prepareL4L5(image):
@@ -112,10 +123,11 @@ def getLandsat(**kwargs):
     region = kwargs.get('region', None)
     targetBands = kwargs.get('targetBands', ['BLUE', 'GREEN', 'RED', 'NIR', 'SWIR1', 'SWIR2', 'TEMP',
                                              'NDFI', 'GV', 'NPV', 'Shade', 'Soil', ])
+    ndfiParams = kwargs.get('ndfiParams', NDFIParams())
     useMask = kwargs.get('useMask', True)
     sensors = kwargs.get(
         'sensors', {'l4': True, 'l5': True, 'l7': True, 'l8': True})
-
+    
     # // Filter using new filtering  lambda
     collection4 = ee.ImageCollection('LANDSAT/LT04/C01/T1_SR') \
         .filterDate(start, end)
@@ -157,7 +169,7 @@ def getLandsat(**kwargs):
     if region:
         col = col.filterBounds(region)
 
-    indices = doIndices(col).select(targetBands)
+    indices = doIndices(col, ndfiParams=ndfiParams).select(targetBands)
 
     if sensors['l5'] is not True:
         indices = indices.filterMetadata(
@@ -211,12 +223,14 @@ def maskS2clouds(image):
 #  * 
 #  * @returns (ee.ImageCollection) Sentinel-2 SR and spectral indices
 #  */
-def getS2(roi):
-#   // Sentinel-2 surface reflectance data for the composite.
+def getS2(roi, ndfiParams : Optional[NDFIParams]=None):
+    if ndfiParams is None:
+        ndfiParams = NDFIParams()
+    #// Sentinel-2 surface reflectance data for the composite.
     s2Sr = ee.ImageCollection('COPERNICUS/S2_SR');
     if (roi) : s2Sr = s2Sr.filterBounds(roi)
     s2Sr = s2Sr.map(maskS2clouds)
-    return doIndices(s2Sr)
+    return doIndices(s2Sr, ndfiParams)
 
 if __name__ == "__main__":
     aoi = ee.FeatureCollection(
